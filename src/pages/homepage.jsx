@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import HeroCarousel from "../components/HeroCarousel";
 import ProductCard from "../components/ProductCard";
@@ -99,7 +99,7 @@ export default function Homepage() {
               to="/products"
               className="text-xs font-bold text-stone-900 hover:text-stone-600 inline-flex items-center gap-1 mt-2 md:mt-0 transition underline underline-offset-4"
             >
-              View all products ({products.length}) →
+              View all products ({productList.length}) →
             </Link>
           </div>
 
