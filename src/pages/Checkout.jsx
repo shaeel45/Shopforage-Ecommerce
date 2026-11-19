@@ -4,6 +4,11 @@ import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrderContext";
 import { useToast } from "../context/ToastContext";
+import {
+  consumeInventory,
+  releaseInventory,
+  reserveInventory,
+} from "../api";
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -53,16 +58,62 @@ export default function Checkout() {
   const selectedShippingCost = shippingMethod === "express" ? 14.99 : shippingFee;
   const finalTotal = subtotal - discountAmount + selectedShippingCost + tax;
 
-  const handleSubmitOrder = (e) => {
+  const handleSubmitOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) {
       addToast("Your cart is empty!", "error");
       return;
     }
 
+    // Aggregate cart lines per product. Non-numeric IDs mean the catalog is
+    // running on local mock data, so there is no backend stock to reserve.
+    const requested = new Map();
+    for (const item of cart) {
+      const productId = Number(item.id);
+      if (!Number.isInteger(productId) || productId <= 0) continue;
+      requested.set(
+        productId,
+        (requested.get(productId) || 0) + Number(item.quantity || 0)
+      );
+    }
+
+    const referenceId = `SF-${Date.now()}`;
+    const reserved = [];
     setIsSubmitting(true);
 
-    setTimeout(() => {
+    try {
+      // 1) Reserve stock. If any line fails, release what we already hold.
+      for (const [productId, quantity] of requested) {
+        try {
+          await reserveInventory(productId, quantity, referenceId);
+          reserved.push({ productId, quantity });
+        } catch (error) {
+          await releaseReservations(reserved, referenceId);
+          addToast(
+            error.message || "Some items are no longer available in the requested quantity.",
+            "error"
+          );
+          return;
+        }
+      }
+
+      // 2) Simulate payment processing.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+
+      // 3) Finalize the sale (decrements stock + writes SALE history).
+      for (const hold of reserved) {
+        try {
+          await consumeInventory(hold.productId, hold.quantity, referenceId);
+        } catch (error) {
+          await releaseReservations(reserved, referenceId);
+          addToast(
+            error.message || "Payment could not be completed. Your stock hold was released.",
+            "error"
+          );
+          return;
+        }
+      }
+
       const createdOrder = placeOrder({
         items: [...cart],
         shippingAddress: {
@@ -90,11 +141,20 @@ export default function Checkout() {
       });
 
       clearCart();
-      setIsSubmitting(false);
       addToast("Order placed successfully!", "success");
       navigate(`/order-success/${createdOrder.id}`);
-    }, 1200);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  async function releaseReservations(holds, referenceId) {
+    await Promise.all(
+      holds.map((hold) =>
+        releaseInventory(hold.productId, hold.quantity, referenceId).catch(() => null)
+      )
+    );
+  }
 
   if (cart.length === 0) {
     return (

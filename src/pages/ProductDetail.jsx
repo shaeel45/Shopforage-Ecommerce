@@ -28,6 +28,9 @@ export default function ProductDetail() {
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { addToast } = useToast();
 
+  const maxQuantity = product ? Math.max(1, product.stock) : 1;
+  const isOutOfStock = product ? product.stock <= 0 : false;
+
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -100,10 +103,18 @@ export default function ProductDetail() {
       : null;
 
   const handleAddToCart = () => {
+    if (isOutOfStock) {
+      addToast("This product is out of stock.", "error");
+      return;
+    }
     addToCart(product, quantity, selectedSize, selectedColor);
   };
 
   const handleBuyNow = () => {
+    if (isOutOfStock) {
+      addToast("This product is out of stock.", "error");
+      return;
+    }
     addToCart(product, quantity, selectedSize, selectedColor);
     navigate("/checkout");
   };
@@ -327,12 +338,20 @@ export default function ProductDetail() {
                     </button>
                     <span className="px-5 py-2 text-xs font-bold">{quantity}</span>
                     <button
-                      onClick={() => setQuantity((q) => q + 1)}
+                      onClick={() => setQuantity((q) => Math.min(maxQuantity, q + 1))}
                       className="px-3.5 py-2 text-stone-600 hover:bg-stone-100 rounded-r-xl font-bold transition"
                     >
                       +
                     </button>
                   </div>
+                  {isOutOfStock && (
+                    <p className="text-[10px] text-red-600 mt-1 text-center">Only {product.stock} left in stock.</p>
+                  )}
+                  {quantity > product.stock && (
+                    <p className="text-[10px] text-red-600 mt-1 text-center">
+                      Only {product.stock} unit{product.stock !== 1 ? "s" : ""} available.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -341,18 +360,20 @@ export default function ProductDetail() {
                 <div className="flex gap-3">
                   <button
                     onClick={handleAddToCart}
-                    className="flex-1 bg-stone-900 hover:bg-black text-white font-semibold py-3.5 px-6 rounded-xl text-sm transition shadow-sm flex items-center justify-center gap-2"
+                    disabled={isOutOfStock}
+                    className={`flex-1 ${isOutOfStock ? "bg-stone-200 text-stone-400 cursor-not-allowed" : "bg-stone-900 hover:bg-black text-white"} font-semibold py-3.5 px-6 rounded-xl text-sm transition shadow-sm flex items-center justify-center gap-2`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
                     </svg>
-                    Add to Cart
+                    {isOutOfStock ? "Out of Stock" : "Add to Cart"}
                   </button>
                   <button
                     onClick={handleBuyNow}
-                    className="flex-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold py-3.5 px-6 rounded-xl text-sm transition shadow-sm"
+                    disabled={isOutOfStock}
+                    className={`flex-1 ${isOutOfStock ? "bg-stone-200 text-stone-400 cursor-not-allowed" : "bg-amber-500 hover:bg-amber-600 text-stone-950"} font-bold py-3.5 px-6 rounded-xl text-sm transition shadow-sm`}
                   >
-                    Buy Now
+                    {isOutOfStock ? "Unavailable" : "Buy Now"}
                   </button>
                 </div>
 

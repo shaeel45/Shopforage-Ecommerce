@@ -65,6 +65,11 @@ export default function ProductCard({ product }) {
                 Hot
               </span>
             )}
+            {product.stock <= 0 && (
+              <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+                Out of Stock
+              </span>
+            )}
           </div>
 
           {/* Wishlist Button */}
@@ -95,6 +100,15 @@ export default function ProductCard({ product }) {
               />
             </svg>
           </button>
+
+          {/* Out of stock overlay */}
+          {product.stock <= 0 && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded-xl">
+              <span className="text-white font-bold text-xs uppercase tracking-wider">
+                Out of Stock
+              </span>
+            </div>
+          )}
 
           {/* Quick View Button overlay on hover */}
           <div className="absolute inset-x-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 hidden md:block">
@@ -143,7 +157,8 @@ export default function ProductCard({ product }) {
 
             <button
               onClick={handleQuickAdd}
-              className="inline-flex items-center gap-1.5 bg-stone-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-xs font-medium transition active:scale-95 shadow-sm"
+              disabled={product.stock <= 0}
+              className={`inline-flex items-center gap-1.5 ${product.stock <= 0 ? "bg-stone-200 text-stone-400 cursor-not-allowed" : "bg-stone-900 hover:bg-black text-white px-3 py-1.5 rounded-lg text-xs font-medium transition active:scale-95 shadow-sm"}`}
               aria-label={`Add ${product.name} to cart`}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -154,7 +169,7 @@ export default function ProductCard({ product }) {
                   d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
                 />
               </svg>
-              <span>Add</span>
+              <span>{product.stock <= 0 ? "Out of Stock" : "Add"}</span>
             </button>
           </div>
         </div>

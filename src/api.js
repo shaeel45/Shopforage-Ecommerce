@@ -177,3 +177,68 @@ export async function submitProductReview(id, reviewData) {
   // Fallback local return
   return null;
 }
+
+export async function fetchInventoryByProductId(productId) {
+  try {
+    const response = await fetch(`${API_URL}/inventory/product/${productId}`);
+    if (!response.ok) return null;
+    return response.json();
+  } catch (error) {
+    console.warn("fetchInventoryByProductId error:", error.message);
+    return null;
+  }
+}
+
+async function postCheckoutInventory(path, payload) {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    const message = Array.isArray(data?.message)
+      ? data.message.join(", ")
+      : data?.message || data || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+/** Hold stock for a pending checkout (prevents overselling). */
+export function reserveInventory(productId, quantity, referenceId) {
+  return postCheckoutInventory("/inventory/checkout/reserve", {
+    productId: Number(productId),
+    quantity: Number(quantity),
+    referenceId,
+  });
+}
+
+/** Finalize a reservation into a completed sale. */
+export function consumeInventory(productId, quantity, referenceId) {
+  return postCheckoutInventory("/inventory/checkout/consume", {
+    productId: Number(productId),
+    quantity: Number(quantity),
+    referenceId,
+  });
+}
+
+/** Release a reservation when checkout is cancelled or fails. */
+export function releaseInventory(productId, quantity, referenceId) {
+  return postCheckoutInventory("/inventory/checkout/release", {
+    productId: Number(productId),
+    quantity: Number(quantity),
+    referenceId,
+  });
+}
