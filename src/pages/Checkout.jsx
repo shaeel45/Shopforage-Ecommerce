@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrderContext";
 import { useToast } from "../context/ToastContext";
 import {
+  checkoutOrder,
   consumeInventory,
   createOrder,
   redeemPromoCode,
@@ -79,12 +80,85 @@ export default function Checkout() {
       );
     }
 
+    const shippingLabel =
+      shippingMethod === "express" ? "Priority Express ($14.99)" : "Standard Shipping";
+    const paymentLabel =
+      paymentMethod === "card"
+        ? `Credit Card (${formData.cardNumber.slice(-4)})`
+        : paymentMethod === "paypal"
+        ? "PayPal"
+        : "Cash on Delivery";
+
     const referenceId = `SF-${Date.now()}`;
     const reserved = [];
     setIsSubmitting(true);
 
     try {
-      // 1) Reserve stock. If any line fails, release what we already hold.
+      // 1) First attempt unified atomic checkout via Orders microservice
+      try {
+        const cartToken =
+          localStorage.getItem("shopforge_cart_token") ||
+          `SF-CART-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        localStorage.setItem("shopforge_cart_token", cartToken);
+
+        const checkoutRes = await checkoutOrder({
+          cartToken,
+          customerId: user?.id,
+          customerName: formData.fullName,
+          customerEmail: formData.email,
+          customerPhone: formData.phone,
+          shippingAddress: {
+            fullName: formData.fullName,
+            email: formData.email,
+            phone: formData.phone,
+            street: formData.street,
+            city: formData.city,
+            state: formData.state,
+            postalCode: formData.postalCode,
+            country: formData.country,
+          },
+          shippingMethod: shippingLabel,
+          paymentMethod: paymentLabel,
+          promoCode: appliedPromo?.code,
+          tax,
+          shippingFee: selectedShippingCost,
+          items: cart.map((item) => ({
+            productId:
+              item.id === undefined || item.id === null ? undefined : String(item.id),
+            name: item.name,
+            price: Number(item.price) || 0,
+            quantity: Number(item.quantity) || 1,
+            size: item.selectedSize,
+            color: item.selectedColor,
+            image: item.image,
+          })),
+        });
+
+        if (checkoutRes && checkoutRes.order) {
+          const createdOrder =
+            recordOrder(checkoutRes.order) || checkoutRes.order;
+          clearCart();
+          addToast("Order placed successfully!", "success");
+          navigate(`/order-success/${createdOrder.id}`);
+          return;
+        }
+      } catch (backendCheckoutError) {
+        // If it's a conflict or inventory shortage error from backend, show error
+        if (
+          backendCheckoutError.message &&
+          (backendCheckoutError.message.toLowerCase().includes("stock") ||
+            backendCheckoutError.message.toLowerCase().includes("promo"))
+        ) {
+          addToast(backendCheckoutError.message, "error");
+          return;
+        }
+        console.warn(
+          "Backend /checkout unreachable or unavailable, falling back to client flow:",
+          backendCheckoutError.message
+        );
+      }
+
+      // 2) Fallback: Reserve stock. If any line fails, release what we already hold.
       for (const [productId, quantity] of requested) {
         try {
           await reserveInventory(productId, quantity, referenceId);
@@ -115,15 +189,6 @@ export default function Checkout() {
           return;
         }
       }
-
-      const shippingLabel =
-        shippingMethod === "express" ? "Priority Express ($14.99)" : "Standard Shipping";
-      const paymentLabel =
-        paymentMethod === "card"
-          ? `Credit Card (${formData.cardNumber.slice(-4)})`
-          : paymentMethod === "paypal"
-          ? "PayPal"
-          : "Cash on Delivery";
 
       // Shape used by the local cache when the orders service is unreachable.
       const localOrderData = {

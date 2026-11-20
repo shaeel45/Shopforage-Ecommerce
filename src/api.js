@@ -285,6 +285,14 @@ export function createOrder(payload) {
 }
 
 /**
+ * Run full checkout flow through the backend orders service:
+ * validates promo, reserves stock, creates order, consumes stock, redeems promo.
+ */
+export function checkoutOrder(payload) {
+  return postPublicJson("/checkout", payload);
+}
+
+/**
  * Orders for one storefront customer. Returns `null` when the API is
  * unreachable so the caller can keep showing local history.
  */
