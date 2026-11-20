@@ -1,9 +1,17 @@
-import React from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrderContext";
 
 export default function Orders() {
-  const { orders } = useOrders();
+  const { orders, syncOrders } = useOrders();
+  const { user } = useAuth();
+
+  // Pull the latest statuses from the orders service; local history is kept
+  // when the API is unreachable.
+  useEffect(() => {
+    syncOrders(user).catch(() => null);
+  }, [syncOrders, user]);
 
   if (orders.length === 0) {
     return (
@@ -75,6 +83,8 @@ export default function Orders() {
                         ? "bg-emerald-100 text-emerald-800"
                         : order.status === "Shipped"
                         ? "bg-blue-100 text-blue-800"
+                        : order.status === "Cancelled"
+                        ? "bg-red-100 text-red-800"
                         : "bg-amber-100 text-amber-800"
                     }`}
                   >
@@ -91,44 +101,53 @@ export default function Orders() {
 
               {/* Status Visual Tracker */}
               <div className="px-6 py-4 bg-stone-50/30 border-b border-stone-100">
-                <div className="flex items-center justify-between max-w-md mx-auto text-[11px] font-semibold text-stone-600">
-                  <div className="flex flex-col items-center">
-                    <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs mb-1">
-                      ✓
+                {order.status === "Cancelled" ? (
+                  <div className="flex items-center justify-center gap-2 text-[11px] font-semibold text-red-700">
+                    <span className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center text-xs">
+                      ✕
                     </span>
-                    <span>Confirmed</span>
+                    <span>This order was cancelled — no further updates will follow.</span>
                   </div>
-                  <div className="h-0.5 flex-1 bg-emerald-500 mx-2" />
-                  <div className="flex flex-col items-center">
-                    <span
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mb-1 ${
-                        order.status === "Shipped" || order.status === "Delivered"
-                          ? "bg-emerald-500 text-white"
-                          : "bg-amber-400 text-stone-950 font-bold"
+                ) : (
+                  <div className="flex items-center justify-between max-w-md mx-auto text-[11px] font-semibold text-stone-600">
+                    <div className="flex flex-col items-center">
+                      <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs mb-1">
+                        ✓
+                      </span>
+                      <span>Confirmed</span>
+                    </div>
+                    <div className="h-0.5 flex-1 bg-emerald-500 mx-2" />
+                    <div className="flex flex-col items-center">
+                      <span
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mb-1 ${
+                          order.status === "Shipped" || order.status === "Delivered"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-amber-400 text-stone-950 font-bold"
+                        }`}
+                      >
+                        {order.status === "Processing" ? "●" : "✓"}
+                      </span>
+                      <span>Processing</span>
+                    </div>
+                    <div
+                      className={`h-0.5 flex-1 mx-2 ${
+                        order.status === "Delivered" ? "bg-emerald-500" : "bg-stone-200"
                       }`}
-                    >
-                      {order.status === "Processing" ? "●" : "✓"}
-                    </span>
-                    <span>Processing</span>
+                    />
+                    <div className="flex flex-col items-center">
+                      <span
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mb-1 ${
+                          order.status === "Delivered"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-stone-200 text-stone-400"
+                        }`}
+                      >
+                        {order.status === "Delivered" ? "✓" : "3"}
+                      </span>
+                      <span>Delivered</span>
+                    </div>
                   </div>
-                  <div
-                    className={`h-0.5 flex-1 mx-2 ${
-                      order.status === "Delivered" ? "bg-emerald-500" : "bg-stone-200"
-                    }`}
-                  />
-                  <div className="flex flex-col items-center">
-                    <span
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mb-1 ${
-                        order.status === "Delivered"
-                          ? "bg-emerald-500 text-white"
-                          : "bg-stone-200 text-stone-400"
-                      }`}
-                    >
-                      {order.status === "Delivered" ? "✓" : "3"}
-                    </span>
-                    <span>Delivered</span>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Order Items */}

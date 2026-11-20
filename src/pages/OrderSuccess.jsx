@@ -1,11 +1,29 @@
-import React from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { fetchOrderByNumber, mapApiOrder } from "../api";
 import { useOrders } from "../context/OrderContext";
 
 export default function OrderSuccess() {
   const { orderId } = useParams();
   const { getOrder } = useOrders();
-  const order = getOrder(orderId);
+  const [remoteOrder, setRemoteOrder] = useState(null);
+
+  // Deep links (or a cleared cache) may not have the order locally, so fall
+  // back to the public receipt endpoint.
+  useEffect(() => {
+    let active = true;
+    fetchOrderByNumber(orderId)
+      .then((data) => {
+        if (active && data) setRemoteOrder(mapApiOrder(data));
+      })
+      .catch(() => null);
+
+    return () => {
+      active = false;
+    };
+  }, [orderId]);
+
+  const order = getOrder(orderId) || remoteOrder;
 
   return (
     <div className="min-h-screen bg-stone-50 py-12">

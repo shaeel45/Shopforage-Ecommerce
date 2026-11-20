@@ -1,4 +1,4 @@
-import { products as mockProducts, reviews as mockReviews } from "./data/products";
+import { products as mockProducts } from "./data/products";
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:3000").replace(/\/+$/, "");
 
@@ -277,4 +277,101 @@ export function redeemPromoCode(code, orderAmount, orderReference) {
     orderAmount: Number(orderAmount) || 0,
     orderReference,
   });
+}
+
+/** Place an order. Throws on validation/network failure so callers can fall back. */
+export function createOrder(payload) {
+  return postPublicJson("/orders", payload);
+}
+
+/**
+ * Orders for one storefront customer. Returns `null` when the API is
+ * unreachable so the caller can keep showing local history.
+ */
+export async function fetchMyOrders(params = {}) {
+  const entries = Object.entries(params).filter(
+    ([key, value]) =>
+      value !== undefined &&
+      value !== null &&
+      value !== "" &&
+      // The backend validates `email`, so drop a simulated username that is
+      // not an address instead of failing the whole lookup.
+      !(key === "email" && !String(value).includes("@"))
+  );
+  const search = new URLSearchParams(entries).toString();
+
+  try {
+    const response = await fetch(
+      `${API_URL}/orders/mine${search ? `?${search}` : ""}`
+    );
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    const data = await response.json();
+    if (Array.isArray(data)) return data;
+    return Array.isArray(data?.data) ? data.data : [];
+  } catch (error) {
+    console.warn("Orders API unreachable, using local order history:", error.message);
+    return null;
+  }
+}
+
+/** Public receipt lookup by order number (used by the success page). */
+export async function fetchOrderByNumber(orderNumber) {
+  try {
+    const response = await fetch(
+      `${API_URL}/orders/track/${encodeURIComponent(orderNumber)}`
+    );
+    if (!response.ok) return null;
+    return response.json();
+  } catch (error) {
+    console.warn("Order lookup failed:", error.message);
+    return null;
+  }
+}
+
+/** Map an API order into the shape the storefront pages render. */
+export function mapApiOrder(order) {
+  if (!order) return null;
+  const status =
+    typeof order.status === "string"
+      ? order.status.charAt(0) + order.status.slice(1).toLowerCase()
+      : "Processing";
+
+  return {
+    id: order.orderNumber ?? String(order.id),
+    numericId: order.id,
+    date: order.createdAt
+      ? new Date(order.createdAt).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
+    status,
+    trackingNumber: order.trackingNumber || undefined,
+    items: (order.items || []).map((item) => ({
+      id: item.productId ?? String(item.id),
+      name: item.productName,
+      price: Number(item.unitPrice) || 0,
+      quantity: Number(item.quantity) || 0,
+      selectedSize: item.size || undefined,
+      selectedColor: item.color || undefined,
+      image: item.image || "",
+    })),
+    shippingAddress: {
+      fullName: order.shippingFullName,
+      email: order.customerEmail,
+      phone: order.customerPhone || undefined,
+      street: order.shippingStreet,
+      city: order.shippingCity,
+      state: order.shippingState,
+      postalCode: order.shippingPostalCode,
+      country: order.shippingCountry,
+    },
+    shippingMethod: order.shippingMethod,
+    paymentMethod: order.paymentMethod,
+    promoCode: order.promoCode || undefined,
+    subtotal: Number(order.subtotal) || 0,
+    discount: Number(order.discount) || 0,
+    tax: Number(order.tax) || 0,
+    shippingFee: Number(order.shippingFee) || 0,
+    total: Number(order.total) || 0,
+  };
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
@@ -6,6 +6,7 @@ import { useOrders } from "../context/OrderContext";
 import { useToast } from "../context/ToastContext";
 import {
   consumeInventory,
+  createOrder,
   redeemPromoCode,
   releaseInventory,
   reserveInventory,
@@ -13,9 +14,9 @@ import {
 
 export default function Checkout() {
   const navigate = useNavigate();
-  const { cart, subtotal, discountAmount, shippingFee, tax, total, clearCart, appliedPromo } = useCart();
+  const { cart, subtotal, discountAmount, shippingFee, tax, clearCart, appliedPromo } = useCart();
   const { user, isAuthenticated } = useAuth();
-  const { placeOrder } = useOrders();
+  const { placeOrder, recordOrder } = useOrders();
   const { addToast } = useToast();
 
   const [shippingMethod, setShippingMethod] = useState("standard");
@@ -115,7 +116,17 @@ export default function Checkout() {
         }
       }
 
-      const createdOrder = placeOrder({
+      const shippingLabel =
+        shippingMethod === "express" ? "Priority Express ($14.99)" : "Standard Shipping";
+      const paymentLabel =
+        paymentMethod === "card"
+          ? `Credit Card (${formData.cardNumber.slice(-4)})`
+          : paymentMethod === "paypal"
+          ? "PayPal"
+          : "Cash on Delivery";
+
+      // Shape used by the local cache when the orders service is unreachable.
+      const localOrderData = {
         items: [...cart],
         shippingAddress: {
           fullName: formData.fullName,
@@ -127,19 +138,61 @@ export default function Checkout() {
           postalCode: formData.postalCode,
           country: formData.country
         },
-        shippingMethod: shippingMethod === "express" ? "Priority Express ($14.99)" : "Standard Shipping",
-        paymentMethod:
-          paymentMethod === "card"
-            ? `Credit Card (${formData.cardNumber.slice(-4)})`
-            : paymentMethod === "paypal"
-            ? "PayPal"
-            : "Cash on Delivery",
+        shippingMethod: shippingLabel,
+        paymentMethod: paymentLabel,
         subtotal,
         discount: discountAmount,
         shippingFee: selectedShippingCost,
         tax,
         total: finalTotal
-      });
+      };
+
+      let createdOrder;
+      try {
+        const apiOrder = await createOrder({
+          customerId: user?.id,
+          customerName: formData.fullName,
+          customerEmail: formData.email,
+          customerPhone: formData.phone,
+          shippingAddress: {
+            fullName: formData.fullName,
+            email: formData.email,
+            phone: formData.phone,
+            street: formData.street,
+            city: formData.city,
+            state: formData.state,
+            postalCode: formData.postalCode,
+            country: formData.country
+          },
+          shippingMethod: shippingLabel,
+          paymentMethod: paymentLabel,
+          promoCode: appliedPromo?.code,
+          items: cart.map((item) => ({
+            productId:
+              item.id === undefined || item.id === null ? undefined : String(item.id),
+            name: item.name,
+            price: Number(item.price) || 0,
+            quantity: Number(item.quantity) || 1,
+            size: item.selectedSize,
+            color: item.selectedColor,
+            image: item.image
+          })),
+          subtotal,
+          discount: discountAmount,
+          shippingFee: selectedShippingCost,
+          tax,
+          total: finalTotal
+        });
+
+        createdOrder = recordOrder(apiOrder) || placeOrder(localOrderData);
+      } catch (error) {
+        // Never lose a paid order because the order service is down.
+        createdOrder = placeOrder(localOrderData);
+        addToast(
+          `Order placed, but it could not be saved to the order service: ${error.message}`,
+          "warning"
+        );
+      }
 
       // 4) Record the promo redemption (best-effort: the order already exists).
       if (appliedPromo?.code) {
