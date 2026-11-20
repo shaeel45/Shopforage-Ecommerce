@@ -1,11 +1,28 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { products, promoCodes } from "../data/products";
 import ProductCard from "../components/ProductCard";
 import { useToast } from "../context/ToastContext";
+import { fetchActivePromoCodes } from "../api";
 
 export default function Offers() {
   const { addToast } = useToast();
+  const [codes, setCodes] = useState(promoCodes);
+
+  useEffect(() => {
+    let active = true;
+    fetchActivePromoCodes()
+      .then((list) => {
+        if (active && Array.isArray(list) && list.length > 0) {
+          setCodes(list);
+        }
+      })
+      .catch(() => null);
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const discountedProducts = products.filter(
     (p) => p.originalPrice && p.originalPrice > p.price
@@ -38,7 +55,7 @@ export default function Offers() {
             Active Coupon Codes
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {promoCodes.map((promo) => (
+            {codes.map((promo) => (
               <div
                 key={promo.code}
                 className="bg-white rounded-2xl border-2 border-dashed border-stone-300 p-6 shadow-sm flex flex-col justify-between hover:border-black transition"

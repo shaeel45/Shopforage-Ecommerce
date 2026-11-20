@@ -189,7 +189,7 @@ export async function fetchInventoryByProductId(productId) {
   }
 }
 
-async function postCheckoutInventory(path, payload) {
+async function postPublicJson(path, payload) {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -218,7 +218,7 @@ async function postCheckoutInventory(path, payload) {
 
 /** Hold stock for a pending checkout (prevents overselling). */
 export function reserveInventory(productId, quantity, referenceId) {
-  return postCheckoutInventory("/inventory/checkout/reserve", {
+  return postPublicJson("/inventory/checkout/reserve", {
     productId: Number(productId),
     quantity: Number(quantity),
     referenceId,
@@ -227,7 +227,7 @@ export function reserveInventory(productId, quantity, referenceId) {
 
 /** Finalize a reservation into a completed sale. */
 export function consumeInventory(productId, quantity, referenceId) {
-  return postCheckoutInventory("/inventory/checkout/consume", {
+  return postPublicJson("/inventory/checkout/consume", {
     productId: Number(productId),
     quantity: Number(quantity),
     referenceId,
@@ -236,9 +236,45 @@ export function consumeInventory(productId, quantity, referenceId) {
 
 /** Release a reservation when checkout is cancelled or fails. */
 export function releaseInventory(productId, quantity, referenceId) {
-  return postCheckoutInventory("/inventory/checkout/release", {
+  return postPublicJson("/inventory/checkout/release", {
     productId: Number(productId),
     quantity: Number(quantity),
     referenceId,
+  });
+}
+
+/**
+ * Promo codes currently redeemable (active, unexpired, not exhausted).
+ * Returns null when the API is unreachable so callers can fall back to
+ * the bundled demo list.
+ */
+export async function fetchActivePromoCodes() {
+  try {
+    const response = await fetch(`${API_URL}/promocodes/active`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.warn("Promo codes API unreachable, using fallback list:", error.message);
+    return null;
+  }
+}
+
+/** Dry-run validation — never increments usage. */
+export function validatePromoCode(code, orderAmount = 0) {
+  return postPublicJson("/promocodes/validate", {
+    code,
+    orderAmount: Number(orderAmount) || 0,
+  });
+}
+
+/** Record a redemption for a placed order (increments usage). */
+export function redeemPromoCode(code, orderAmount, orderReference) {
+  return postPublicJson("/promocodes/redeem", {
+    code,
+    orderAmount: Number(orderAmount) || 0,
+    orderReference,
   });
 }

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useToast } from "./ToastContext";
 import { promoCodes } from "../data/products";
+import { validatePromoCode } from "../api";
 
 const CartContext = createContext(null);
 
@@ -99,17 +100,60 @@ export const CartProvider = ({ children }) => {
     setCart([]);
   };
 
-  const applyPromo = (code) => {
-    const cleanCode = code.trim().toUpperCase();
-    const found = promoCodes.find((p) => p.code.toUpperCase() === cleanCode);
+  const applyPromo = async (code) => {
+    const cleanCode = String(code || "").trim().toUpperCase();
+    if (!cleanCode) {
+      addToast("Enter a coupon code", "error");
+      return { success: false, message: "Enter a coupon code" };
+    }
 
-    if (found) {
-      setAppliedPromo(found);
-      addToast(`Promo code "${found.code}" applied: ${found.discountPercent}% OFF!`, "success");
-      return { success: true, message: `${found.discountPercent}% discount applied!` };
-    } else {
-      addToast("Invalid or expired coupon code", "error");
-      return { success: false, message: "Invalid coupon code" };
+    const currentSubtotal = cart.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+
+    try {
+      const result = await validatePromoCode(cleanCode, currentSubtotal);
+
+      if (result?.valid) {
+        setAppliedPromo({
+          code: result.code,
+          discountPercent: result.discountPercent,
+          description: result.message,
+        });
+        addToast(
+          `Promo code "${result.code}" applied: ${result.discountPercent}% OFF!`,
+          "success"
+        );
+        return { success: true, message: result.message };
+      }
+
+      addToast(result?.message || "Invalid or expired coupon code", "error");
+      return {
+        success: false,
+        message: result?.message || "Invalid coupon code",
+      };
+    } catch (error) {
+      // Backend unreachable → fall back to the bundled demo codes so the
+      // storefront keeps working offline.
+      const found = promoCodes.find((p) => p.code.toUpperCase() === cleanCode);
+      if (found) {
+        setAppliedPromo(found);
+        addToast(
+          `Promo code "${found.code}" applied: ${found.discountPercent}% OFF!`,
+          "success"
+        );
+        return {
+          success: true,
+          message: `${found.discountPercent}% discount applied!`,
+        };
+      }
+
+      addToast(error.message || "Invalid or expired coupon code", "error");
+      return {
+        success: false,
+        message: error.message || "Invalid coupon code",
+      };
     }
   };
 

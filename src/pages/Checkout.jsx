@@ -6,13 +6,14 @@ import { useOrders } from "../context/OrderContext";
 import { useToast } from "../context/ToastContext";
 import {
   consumeInventory,
+  redeemPromoCode,
   releaseInventory,
   reserveInventory,
 } from "../api";
 
 export default function Checkout() {
   const navigate = useNavigate();
-  const { cart, subtotal, discountAmount, shippingFee, tax, total, clearCart } = useCart();
+  const { cart, subtotal, discountAmount, shippingFee, tax, total, clearCart, appliedPromo } = useCart();
   const { user, isAuthenticated } = useAuth();
   const { placeOrder } = useOrders();
   const { addToast } = useToast();
@@ -139,6 +140,18 @@ export default function Checkout() {
         tax,
         total: finalTotal
       });
+
+      // 4) Record the promo redemption (best-effort: the order already exists).
+      if (appliedPromo?.code) {
+        try {
+          await redeemPromoCode(appliedPromo.code, subtotal, createdOrder.id);
+        } catch (error) {
+          addToast(
+            `Order placed, but the promo code could not be recorded: ${error.message}`,
+            "warning"
+          );
+        }
+      }
 
       clearCart();
       addToast("Order placed successfully!", "success");
