@@ -159,6 +159,294 @@ export async function fetchProductById(id) {
   return found ? normalizeProduct(found) : null;
 }
 
+// --- Product search --------------------------------------------------------
+// Backed by `GET /products/search` (ranked results) and
+// `GET /products/suggestions` (header autocomplete). Both degrade to the
+// bundled mock catalog when the API is unreachable.
+
+const SEARCH_STOP_WORDS = new Set(["the", "a", "an", "and", "or", "for", "of"]);
+
+function tokenizeSearch(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .toLowerCase()
+        .split(/\s+/)
+        .map((token) => token.replace(/[^\p{L}\p{N}'-]/gu, ""))
+        .filter((token) => token && !SEARCH_STOP_WORDS.has(token))
+    )
+  );
+}
+
+function searchableList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).toLowerCase());
+  if (typeof value === "string") return splitValues(value).map((item) => item.toLowerCase());
+  return [];
+}
+
+/** Mirrors the server-side relevance scoring for offline/demo data. */
+function scoreProductForSearch(product, phrase, tokens) {
+  const name = String(product.name || "").toLowerCase();
+  const description = String(product.description || "").toLowerCase();
+  const category = String(product.category || "").toLowerCase();
+  const colors = searchableList(product.colors);
+  const sizes = searchableList(product.sizes);
+  const details = searchableList(product.details);
+
+  let score = 0;
+
+  if (name === phrase) score += 140;
+  else if (name.startsWith(phrase)) score += 100;
+  else if (name.includes(phrase)) score += 80;
+
+  if (category === phrase) score += 60;
+  else if (category.includes(phrase)) score += 40;
+
+  if (description.includes(phrase)) score += 15;
+
+  for (const token of tokens) {
+    if (name.split(/\s+/).includes(token)) score += 24;
+    else if (name.includes(token)) score += 16;
+
+    if (category.split(/\s+/).includes(token)) score += 12;
+    else if (category.includes(token)) score += 8;
+
+    if (description.includes(token)) score += 4;
+    if (colors.some((color) => color === token)) score += 10;
+    else if (colors.some((color) => color.includes(token))) score += 6;
+
+    if (sizes.some((size) => size === token)) score += 6;
+    if (details.some((detail) => detail.includes(token))) score += 3;
+  }
+
+  if (Number(product.stock) > 0) score += 3;
+  if (product.isFeatured) score += 2;
+  if (product.isTrending) score += 1;
+
+  return score;
+}
+
+function buildLocalSuggestions(ranked, phrase, suggestionLimit) {
+  const keywordScores = new Map();
+  const categoryCounts = new Map();
+
+  const collect = (raw, weight) => {
+    const word = String(raw || "").replace(/[^\p{L}\p{N}'-]/gu, "").trim();
+    if (!word) return;
+    const key = word.toLowerCase();
+    if (key === phrase || !key.startsWith(phrase)) return;
+    keywordScores.set(key, (keywordScores.get(key) || 0) + weight);
+  };
+
+  for (const { product } of ranked) {
+    const category = String(product.category || "").trim();
+    if (category) {
+      categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+    }
+    for (const word of String(product.name || "").split(/\s+/)) collect(word, 3);
+    collect(category, 2);
+    for (const color of searchableList(product.colors)) collect(color, 1);
+    for (const size of searchableList(product.sizes)) collect(size, 1);
+  }
+
+  return {
+    products: ranked.slice(0, suggestionLimit).map(({ product }) => ({
+      id: String(product.id),
+      name: product.name || "",
+      price: Number(product.price) || 0,
+      image: resolveProductImage(product.imageURL || product.image || ""),
+      category: product.category || "",
+    })),
+    categories: [...categoryCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Math.min(5, suggestionLimit))
+      .map(([name, count]) => ({ name, count })),
+    keywords: [...keywordScores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Math.min(6, suggestionLimit + 1))
+      .map(([word]) => word.charAt(0).toUpperCase() + word.slice(1)),
+  };
+}
+
+function emptySearchResult(term, options = {}) {
+  return {
+    query: term,
+    tokens: [],
+    took: 0,
+    total: 0,
+    page: 1,
+    limit: Number(options.limit) || 8,
+    totalPages: 1,
+    data: [],
+    suggestions: { products: [], categories: [], keywords: [] },
+  };
+}
+
+/** Local ranking/fallback used when the search API cannot be reached. */
+function buildLocalSearchResult(term, options = {}) {
+  const phrase = String(term || "").trim().toLowerCase();
+  const tokens = tokenizeSearch(phrase);
+  if (!tokens.length) return emptySearchResult(term, options);
+
+  const limit = Math.max(1, Number(options.limit) || 8);
+  const page = Math.max(1, Number(options.page) || 1);
+  const suggestionLimit = Math.max(1, Number(options.suggestionLimit) || 5);
+
+  const ranked = mockProducts
+    .map((product) => ({
+      product,
+      score: scoreProductForSearch(product, phrase, tokens),
+    }))
+    .filter(({ product, score }) => {
+      if (score <= 0) return false;
+      if (options.category && options.category !== "all" && product.category !== options.category) {
+        return false;
+      }
+      if (options.minPrice !== undefined && product.price < options.minPrice) return false;
+      if (options.maxPrice !== undefined && product.price > options.maxPrice) return false;
+      if (options.inStock && Number(product.stock) <= 0) return false;
+      return true;
+    });
+
+  if (options.sortBy === "price-asc") ranked.sort((a, b) => a.product.price - b.product.price);
+  else if (options.sortBy === "price-desc") ranked.sort((a, b) => b.product.price - a.product.price);
+  else if (options.sortBy === "rating") ranked.sort((a, b) => b.product.rating - a.product.rating);
+  else ranked.sort((a, b) => b.score - a.score);
+
+  const total = ranked.length;
+  const totalPages = Math.ceil(total / limit) || 1;
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * limit;
+
+  return {
+    query: String(term || "").trim(),
+    tokens,
+    took: 0,
+    total,
+    page: safePage,
+    limit,
+    totalPages,
+    data: ranked
+      .slice(start, start + limit)
+      .map(({ product, score }) => ({
+        ...normalizeProduct(product),
+        relevance: Number(score.toFixed(2)),
+      })),
+    suggestions: buildLocalSuggestions(ranked, phrase, suggestionLimit),
+  };
+}
+
+function normalizeSearchSuggestions(raw) {
+  const products = Array.isArray(raw?.products) ? raw.products : [];
+  const categories = Array.isArray(raw?.categories) ? raw.categories : [];
+  const keywords = Array.isArray(raw?.keywords) ? raw.keywords : [];
+
+  return {
+    products: products.map((product) => ({
+      id: String(product.id),
+      name: product.name || "",
+      price: Number(product.price) || 0,
+      image: resolveProductImage(product.image || product.imageURL || ""),
+      category: product.category || "",
+    })),
+    categories: categories.map((category) => ({
+      name: String(category.name || ""),
+      count: Number(category.count) || 0,
+    })),
+    keywords: keywords.map((keyword) => String(keyword)),
+  };
+}
+
+function appendSearchParams(target, options) {
+  if (options.limit) target.set("limit", String(options.limit));
+  if (options.page) target.set("page", String(options.page));
+  if (options.suggestionLimit) target.set("suggestionLimit", String(options.suggestionLimit));
+  if (options.category && options.category !== "all") target.set("category", options.category);
+  if (options.sortBy) target.set("sortBy", options.sortBy);
+  if (options.minPrice !== undefined) target.set("minPrice", String(options.minPrice));
+  if (options.maxPrice !== undefined) target.set("maxPrice", String(options.maxPrice));
+  if (options.inStock) target.set("inStock", "true");
+}
+
+/**
+ * Ranked product search.
+ *
+ * @param {{ q: string, page?: number, limit?: number, category?: string,
+ *   sortBy?: string, minPrice?: number, maxPrice?: number, inStock?: boolean,
+ *   suggestionLimit?: number }} options
+ * @returns {Promise<{ query: string, total: number, page: number, limit: number,
+ *   totalPages: number, data: any[], suggestions: { products: any[],
+ *   categories: any[], keywords: string[] } }>}
+ */
+export async function searchProducts(options = {}) {
+  const term = String(options.q || "").trim();
+  if (!term) return emptySearchResult(term, options);
+
+  const params = new URLSearchParams({ q: term });
+  appendSearchParams(params, options);
+
+  try {
+    const response = await fetch(`${API_URL}/products/search?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    const data = await response.json();
+
+    return {
+      query: data?.query || term,
+      tokens: Array.isArray(data?.tokens) ? data.tokens : tokenizeSearch(term),
+      took: Number(data?.took) || 0,
+      total: Number(data?.total) || 0,
+      page: Number(data?.page) || 1,
+      limit: Number(data?.limit) || Number(options.limit) || 8,
+      totalPages: Number(data?.totalPages) || 1,
+      data: Array.isArray(data?.data) ? data.data.map(normalizeProduct) : [],
+      suggestions: normalizeSearchSuggestions(data?.suggestions),
+    };
+  } catch (error) {
+    console.warn("Search API unreachable, using local catalog:", error.message);
+    return buildLocalSearchResult(term, options);
+  }
+}
+
+/**
+ * Autocomplete feed for the header search bar.
+ * Returns only the suggestion groups, never a full product page.
+ */
+export async function fetchSearchSuggestions(term, suggestionLimit = 5) {
+  const query = String(term || "").trim();
+  if (!query) {
+    return { query: "", total: 0, suggestions: { products: [], categories: [], keywords: [] } };
+  }
+
+  const params = new URLSearchParams({
+    q: query,
+    suggestionLimit: String(suggestionLimit),
+  });
+
+  try {
+    const response = await fetch(`${API_URL}/products/suggestions?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    const data = await response.json();
+
+    return {
+      query: data?.query || query,
+      total: Number(data?.total) || 0,
+      suggestions: normalizeSearchSuggestions(data?.suggestions),
+    };
+  } catch (error) {
+    console.warn("Search suggestions API unreachable, using local catalog:", error.message);
+    const local = buildLocalSearchResult(query, { limit: 1, suggestionLimit });
+    return {
+      query: local.query,
+      total: local.total,
+      suggestions: local.suggestions,
+    };
+  }
+}
+
 export async function submitProductReview(id, reviewData) {
   try {
     const response = await fetch(`${API_URL}/products/${id}/reviews`, {

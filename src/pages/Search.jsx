@@ -1,55 +1,103 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
-import { fetchProducts } from "../api";
+import { searchProducts, fetchProducts } from "../api";
+
+const SEARCH_LIMIT = 48;
+const FEATURED_LIMIT = 4;
+
+const EMPTY_SUGGESTIONS = { products: [], categories: [], keywords: [] };
+const EMPTY_PAYLOAD = { term: "", items: [], total: 0, suggestions: EMPTY_SUGGESTIONS };
+
+const TRENDING_TERMS = ["Oxford", "Selvedge", "Sneakers", "Flannel", "Derby", "Chino"];
 
 export default function Search() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialQuery = searchParams.get("q") || "";
-  const [searchTerm, setSearchTerm] = useState(initialQuery);
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const queryParam = searchParams.get("q") || "";
 
-  useEffect(() => {
-    setSearchTerm(initialQuery);
-  }, [initialQuery]);
+  // Input state follows the URL, but without an effect: when the URL changes
+  // (for example the header search submits a new term) the input is adjusted
+  // during render, which is the pattern React recommends for derived state.
+  const [lastQueryParam, setLastQueryParam] = useState(queryParam);
+  const [searchTerm, setSearchTerm] = useState(queryParam);
+  if (lastQueryParam !== queryParam) {
+    setLastQueryParam(queryParam);
+    setSearchTerm(queryParam);
+  }
 
+  const term = searchTerm.trim();
+  const hasQuery = term.length > 0;
+
+  const [payload, setPayload] = useState(EMPTY_PAYLOAD);
+  const [featured, setFeatured] = useState([]);
+
+  // Debounced ranked search against GET /products/search. Each response is
+  // stored with the term it belongs to, so a slow response for an old term is
+  // never rendered under the current one.
   useEffect(() => {
-    if (!searchTerm.trim()) {
-      setResults([]);
-      return;
-    }
+    if (!term) return undefined;
 
     let active = true;
-    setLoading(true);
+    const timer = setTimeout(() => {
+      searchProducts({ q: term, limit: SEARCH_LIMIT, suggestionLimit: 6 })
+        .then((res) => {
+          if (!active) return;
+          setPayload({
+            term,
+            items: res.data || [],
+            total: Number(res.total) || 0,
+            suggestions: res.suggestions || EMPTY_SUGGESTIONS,
+          });
+        })
+        .catch((err) => {
+          if (!active) return;
+          console.error("Search error:", err);
+          setPayload({ term, items: [], total: 0, suggestions: EMPTY_SUGGESTIONS });
+        });
+    }, 300);
 
-    fetchProducts({ search: searchTerm.trim(), limit: 50 })
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [term]);
+
+  // Featured fallback shown before a query is typed.
+  useEffect(() => {
+    let active = true;
+
+    fetchProducts({ limit: FEATURED_LIMIT, sortBy: "featured" })
       .then((res) => {
-        if (!active) return;
-        setResults(res.data || []);
+        if (active) setFeatured(res.data || []);
       })
       .catch((err) => {
-        console.error("Search error:", err);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+        console.error("Failed to load featured products:", err);
       });
 
     return () => {
       active = false;
     };
-  }, [searchTerm]);
+  }, []);
 
-  const handleSearchChange = (val) => {
-    setSearchTerm(val);
-    if (val.trim()) {
-      setSearchParams({ q: val.trim() });
+  const current = payload.term === term ? payload : null;
+  const results = current?.items || [];
+  const total = current?.total || 0;
+  const suggestions = current?.suggestions || EMPTY_SUGGESTIONS;
+  const loading = hasQuery && !current;
+
+  const handleSearchChange = (value) => {
+    setSearchTerm(value);
+    // Keep the URL in sync with what was typed (spaces included) so typing
+    // "oxford " does not get rewritten mid-keystroke; the request itself uses
+    // the trimmed term.
+    if (value.trim()) {
+      setSearchParams({ q: value }, { replace: true });
     } else {
-      setSearchParams({});
+      setSearchParams({}, { replace: true });
     }
   };
 
-  const popularSearches = ["Oxford", "Selvedge", "Sneakers", "Flannel", "Derby", "Chino"];
+  const quickTerms = suggestions.keywords.length > 0 ? suggestions.keywords.slice(0, 6) : TRENDING_TERMS;
 
   return (
     <div className="min-h-screen bg-stone-50 py-10">
@@ -88,6 +136,7 @@ export default function Search() {
               <button
                 onClick={() => handleSearchChange("")}
                 className="absolute right-4 top-4 text-stone-400 hover:text-stone-700"
+                aria-label="Clear search"
               >
                 ✕
               </button>
@@ -96,25 +145,46 @@ export default function Search() {
 
           {/* Quick suggestions */}
           <div className="flex flex-wrap items-center justify-center gap-2 mt-4 text-xs text-stone-500">
-            <span>Trending searches:</span>
-            {popularSearches.map((term) => (
+            <span>{suggestions.keywords.length > 0 ? "Related:" : "Trending searches:"}</span>
+            {quickTerms.map((quickTerm) => (
               <button
-                key={term}
-                onClick={() => handleSearchChange(term)}
+                key={quickTerm}
+                onClick={() => handleSearchChange(quickTerm)}
                 className="bg-white px-3 py-1 rounded-full border border-stone-200 hover:border-stone-400 font-medium transition"
               >
-                {term}
+                {quickTerm}
               </button>
             ))}
           </div>
+
+          {suggestions.categories.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-2 text-xs text-stone-500">
+              <span>Categories:</span>
+              {suggestions.categories.map((category) => (
+                <Link
+                  key={category.name}
+                  to={`/products?category=${encodeURIComponent(category.name)}`}
+                  className="bg-stone-900 text-white px-3 py-1 rounded-full hover:bg-black font-medium transition capitalize"
+                >
+                  {category.name} <span className="text-stone-400">({category.count})</span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Results */}
-        {searchTerm.trim() ? (
+        {hasQuery ? (
           <div>
             <div className="flex items-center justify-between text-xs text-stone-500 mb-6 pb-3 border-b border-stone-200">
               <span>
-                Found <strong>{results.length}</strong> results for "<strong>{searchTerm}</strong>"
+                {loading ? (
+                  "Searching…"
+                ) : (
+                  <>
+                    Found <strong>{total}</strong> results for "<strong>{term}</strong>"
+                  </>
+                )}
               </span>
               {results.length > 0 && (
                 <Link to="/products" className="text-black font-semibold hover:underline">
@@ -123,12 +193,12 @@ export default function Search() {
               )}
             </div>
 
-            {results.length === 0 ? (
+            {!loading && results.length === 0 ? (
               <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center max-w-md mx-auto my-6 shadow-sm">
                 <div className="text-4xl mb-3">🔍</div>
                 <h3 className="text-lg font-bold text-stone-900 mb-1">No matches found</h3>
                 <p className="text-xs text-stone-500 mb-6">
-                  We couldn't find any products matching "{searchTerm}". Try another search term or browse our categories.
+                  We couldn't find any products matching "{term}". Try another search term or browse our categories.
                 </p>
                 <Link
                   to="/products"
@@ -151,7 +221,7 @@ export default function Search() {
               Popular Featured Items
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {products.slice(0, 4).map((product) => (
+              {featured.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>

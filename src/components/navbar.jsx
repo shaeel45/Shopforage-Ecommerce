@@ -1,20 +1,19 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useWishlist } from "../context/WishlistContext";
 import { useAuth } from "../context/AuthContext";
+import SearchBar from "./SearchBar";
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
 
   const { itemCount } = useCart();
   const { wishlistCount } = useWishlist();
   const { user, isAuthenticated, logout } = useAuth();
-  const navigate = useNavigate();
   const dropdownRef = useRef(null);
 
   // Close dropdown on outside click
@@ -28,16 +27,6 @@ export default function Navbar() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
-      setSearchOpen(false);
-      setSearchQuery("");
-      setMenuOpen(false);
-    }
-  };
 
   const navLinkClass = ({ isActive }) =>
     `text-sm font-medium transition py-1 px-2 rounded-md ${
@@ -71,18 +60,14 @@ export default function Navbar() {
           <NavLink to="/" className={navLinkClass}>
             Home
           </NavLink>
-
-          <NavLink to="/products" className={navLinkClass}>
-            Shop
-          </NavLink>
-
-          {/* Categories Dropdown */}
+ {/* Categories Dropdown */}
           <div className="relative">
-            <button
+          <NavLink to="/products" className={navLinkClass}>
+          <button
               onClick={() => setCategoriesOpen(!categoriesOpen)}
               className="flex items-center gap-1 text-sm font-medium text-stone-600 transition hover:text-black py-1 px-2 rounded-md hover:bg-stone-50"
             >
-              Categories
+              Shop
               <svg
                 className={`h-4 w-4 transition-transform duration-200 ${
                   categoriesOpen ? "rotate-180" : ""
@@ -94,9 +79,12 @@ export default function Navbar() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
+          </NavLink>
+
+         
 
             {categoriesOpen && (
-              <div className="absolute left-0 top-10 w-48 rounded-xl border border-stone-100 bg-white p-2 shadow-xl animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="absolute left-0 top-16 w-48 rounded-xl border border-stone-100 bg-white p-2 shadow-xl animate-in fade-in slide-in-from-top-2 duration-150">
                 <Link
                   to="/products/shirts"
                   className="block rounded-lg px-3 py-2 text-sm text-stone-700 hover:bg-stone-100 font-medium"
@@ -134,10 +122,6 @@ export default function Navbar() {
             Deals & Offers
           </NavLink>
 
-          <NavLink to="/orders" className={navLinkClass}>
-            Orders
-          </NavLink>
-
           <NavLink to="/about" className={navLinkClass}>
             About Us
           </NavLink>
@@ -147,26 +131,12 @@ export default function Navbar() {
         <div className="hidden md:flex items-center gap-3">
           {/* Quick Search Trigger / Form */}
           {searchOpen ? (
-            <form onSubmit={handleSearchSubmit} className="relative flex items-center">
-              <input
-                type="text"
-                autoFocus
-                placeholder="Search products..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-56 text-xs bg-stone-100 border border-stone-300 rounded-full py-2 pl-8 pr-7 focus:outline-none focus:border-stone-500"
-              />
-              <svg className="w-4 h-4 text-stone-400 absolute left-2.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" />
-              </svg>
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="absolute right-2 text-stone-400 hover:text-stone-700 text-xs"
-              >
-                ✕
-              </button>
-            </form>
+            <SearchBar
+              autoFocus
+              className="w-64"
+              onClose={() => setSearchOpen(false)}
+              onSubmitted={() => setSearchOpen(false)}
+            />
           ) : (
             <button
               onClick={() => setSearchOpen(true)}
@@ -329,18 +299,12 @@ export default function Navbar() {
       {/* Mobile Drawer Menu */}
       {menuOpen && (
         <div className="border-t border-stone-200 bg-white px-5 py-4 md:hidden animate-in slide-in-from-top-3 duration-200">
-          <form onSubmit={handleSearchSubmit} className="relative mb-4">
-            <input
-              type="text"
-              placeholder="Search products..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-sm bg-stone-100 border border-stone-300 rounded-xl py-2 pl-9 pr-4 focus:outline-none focus:border-stone-500"
-            />
-            <svg className="w-4 h-4 text-stone-400 absolute left-3 top-3 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" />
-            </svg>
-          </form>
+          <SearchBar
+            className="mb-4"
+            placeholder="Search products..."
+            inputClassName="py-2.5 text-sm"
+            onSubmitted={() => setMenuOpen(false)}
+          />
 
           <div className="flex flex-col gap-1">
             <NavLink to="/" onClick={() => setMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-sm font-medium hover:bg-stone-100">
