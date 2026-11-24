@@ -189,11 +189,20 @@ export async function fetchInventoryByProductId(productId) {
   }
 }
 
-async function postPublicJson(path, payload) {
+/** Public JSON request with real status codes preserved on the error object. */
+async function requestJson(path, { method = "GET", body, token, headers } = {}) {
+  const requestHeaders = { ...(headers || {}) };
+  if (body !== undefined && !requestHeaders["Content-Type"]) {
+    requestHeaders["Content-Type"] = "application/json";
+  }
+  if (token) {
+    requestHeaders.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    method,
+    headers: Object.keys(requestHeaders).length > 0 ? requestHeaders : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   const text = await response.text();
@@ -210,10 +219,50 @@ async function postPublicJson(path, payload) {
     const message = Array.isArray(data?.message)
       ? data.message.join(", ")
       : data?.message || data || `Request failed (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   return data;
+}
+
+function postPublicJson(path, payload) {
+  return requestJson(path, { method: "POST", body: payload });
+}
+
+// --- Auth -------------------------------------------------------------------
+// Storefront authentication is backed by the auth microservice through the
+// gateway: POST /auth/login, POST /auth/register, POST /auth/refresh and
+// GET /users/me for the signed-in profile.
+
+export function loginUser({ email, password, role = "CUSTOMER" }) {
+  return postPublicJson("/auth/login", { email, password, role });
+}
+
+export function registerUser({
+  fullname,
+  lastname,
+  email,
+  password,
+  role = "CUSTOMER",
+}) {
+  return postPublicJson("/auth/register", {
+    fullname,
+    lastname,
+    email,
+    password,
+    role,
+  });
+}
+
+export function refreshAuthToken(refreshToken) {
+  return postPublicJson("/auth/refresh", { refreshToken });
+}
+
+/** Current user profile for a valid access token. */
+export function fetchCurrentUser(accessToken) {
+  return requestJson("/users/me", { token: accessToken });
 }
 
 /** Hold stock for a pending checkout (prevents overselling). */
@@ -290,6 +339,228 @@ export function createOrder(payload) {
  */
 export function checkoutOrder(payload) {
   return postPublicJson("/checkout", payload);
+}
+
+// --- Server-side cart -------------------------------------------------------
+// The orders service owns the authoritative cart. The browser keeps a local
+// copy for instant UI and mirrors every mutation here on a best-effort basis.
+
+const CART_TOKEN_KEY = "shopforge_cart_token";
+
+/** Stable per-browser cart token; survives logout because it is not the user id. */
+export function getCartToken() {
+  try {
+    const existing = localStorage.getItem(CART_TOKEN_KEY);
+    if (existing) return existing;
+    const generated =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? `cart-${crypto.randomUUID()}`
+        : `cart-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(CART_TOKEN_KEY, generated);
+    return generated;
+  } catch {
+    return `cart-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+/** Map a storefront cart line into the API's cart item shape. */
+export function toCartItemPayload(item) {
+  return {
+    productId:
+      item.id === undefined || item.id === null ? undefined : String(item.id),
+    name: item.name,
+    price: Number(item.price) || 0,
+    quantity: Number(item.quantity) || 1,
+    size: item.selectedSize || item.size || undefined,
+    color: item.selectedColor || item.color || undefined,
+    image: item.image || undefined,
+  };
+}
+
+/** Best-effort wrapper: cart mirroring must never break the storefront. */
+async function mirrorCartRequest(path, options) {
+  try {
+    return await requestJson(path, options);
+  } catch (error) {
+    console.warn(`Cart API ${path} unavailable:`, error.message);
+    return null;
+  }
+}
+
+/** Read the server cart (creates an empty one on first call). */
+export function fetchCart(cartToken = getCartToken(), customer = {}) {
+  const params = new URLSearchParams({ cartToken });
+  if (customer.customerId) params.set("customerId", customer.customerId);
+  if (customer.customerEmail) params.set("customerEmail", customer.customerEmail);
+  return mirrorCartRequest(`/cart?${params.toString()}`);
+}
+
+/** Replace the whole server cart with the browser snapshot. */
+export function syncCart(cartToken, items, customer = {}) {
+  return mirrorCartRequest("/cart", {
+    method: "PUT",
+    body: {
+      cartToken,
+      customerId: customer.customerId || undefined,
+      customerEmail: customer.customerEmail || undefined,
+      items: items.map(toCartItemPayload),
+    },
+  });
+}
+
+export function addCartItem(cartToken, item, customer = {}) {
+  return mirrorCartRequest("/cart/items", {
+    method: "POST",
+    body: {
+      cartToken,
+      customerId: customer.customerId || undefined,
+      customerEmail: customer.customerEmail || undefined,
+      item: toCartItemPayload(item),
+    },
+  });
+}
+
+/** Set an absolute quantity for a stored line; 0 removes it. */
+export function updateCartItem(cartToken, itemId, quantity) {
+  return mirrorCartRequest(`/cart/items/${itemId}`, {
+    method: "PATCH",
+    body: { cartToken, quantity: Number(quantity) || 0 },
+  });
+}
+
+export function removeCartItem(cartToken, itemId) {
+  return mirrorCartRequest(
+    `/cart/items/${itemId}?cartToken=${encodeURIComponent(cartToken)}`,
+    { method: "DELETE" }
+  );
+}
+
+/** Apply a promo to the stored cart. Throws with `status` on a real rejection. */
+export function applyCartPromo(cartToken, code) {
+  return requestJson("/cart/promo", {
+    method: "POST",
+    body: { cartToken, code },
+  });
+}
+
+export function removeCartPromo(cartToken) {
+  return mirrorCartRequest(
+    `/cart/promo?cartToken=${encodeURIComponent(cartToken)}`,
+    { method: "DELETE" }
+  );
+}
+
+export function clearServerCart(cartToken = getCartToken()) {
+  return mirrorCartRequest(
+    `/cart?cartToken=${encodeURIComponent(cartToken)}`,
+    { method: "DELETE" }
+  );
+}
+
+// --- Server-side wishlist ---------------------------------------------------
+// The orders service owns the saved list. The browser keeps a local copy for
+// instant UI and mirrors every save/remove here on a best-effort basis.
+
+const WISHLIST_TOKEN_KEY = "shopforge_wishlist_token";
+
+/** Stable per-browser wishlist token; survives logout because it is not the user id. */
+export function getWishlistToken() {
+  try {
+    const existing = localStorage.getItem(WISHLIST_TOKEN_KEY);
+    if (existing) return existing;
+    const generated =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? `wishlist-${crypto.randomUUID()}`
+        : `wishlist-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(WISHLIST_TOKEN_KEY, generated);
+    return generated;
+  } catch {
+    return `wishlist-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+/** Map a storefront saved product into the API's wishlist item shape. */
+export function toWishlistItemPayload(item) {
+  return {
+    productId:
+      item.id === undefined || item.id === null ? undefined : String(item.id),
+    name: item.name,
+    price: Number(item.price) || 0,
+    image: item.image || undefined,
+    category: item.category || undefined,
+  };
+}
+
+/** Best-effort wrapper: wishlist mirroring must never break the storefront. */
+async function mirrorWishlistRequest(path, options) {
+  try {
+    return await requestJson(path, options);
+  } catch (error) {
+    console.warn(`Wishlist API ${path} unavailable:`, error.message);
+    return null;
+  }
+}
+
+/** Read the saved list (creates an empty one on first call). */
+export function fetchWishlist(wishlistToken = getWishlistToken(), customer = {}) {
+  const params = new URLSearchParams({ wishlistToken });
+  if (customer.customerId) params.set("customerId", customer.customerId);
+  if (customer.customerEmail) params.set("customerEmail", customer.customerEmail);
+  return mirrorWishlistRequest(`/wishlist?${params.toString()}`);
+}
+
+/** Replace the whole saved list with the browser snapshot. */
+export function syncWishlist(wishlistToken, items, customer = {}) {
+  return mirrorWishlistRequest("/wishlist", {
+    method: "PUT",
+    body: {
+      wishlistToken,
+      customerId: customer.customerId || undefined,
+      customerEmail: customer.customerEmail || undefined,
+      items: items.map(toWishlistItemPayload),
+    },
+  });
+}
+
+export function addWishlistItem(wishlistToken, item, customer = {}) {
+  return mirrorWishlistRequest("/wishlist/items", {
+    method: "POST",
+    body: {
+      wishlistToken,
+      customerId: customer.customerId || undefined,
+      customerEmail: customer.customerEmail || undefined,
+      item: toWishlistItemPayload(item),
+    },
+  });
+}
+
+/** Heart-button behaviour: add when missing, remove when already saved. */
+export function toggleWishlistItem(wishlistToken, item, customer = {}) {
+  return mirrorWishlistRequest("/wishlist/toggle", {
+    method: "POST",
+    body: {
+      wishlistToken,
+      customerId: customer.customerId || undefined,
+      customerEmail: customer.customerEmail || undefined,
+      item: toWishlistItemPayload(item),
+    },
+  });
+}
+
+export function removeWishlistItem(wishlistToken, productId) {
+  return mirrorWishlistRequest(
+    `/wishlist/items/${encodeURIComponent(productId)}?wishlistToken=${encodeURIComponent(
+      wishlistToken
+    )}`,
+    { method: "DELETE" }
+  );
+}
+
+export function clearServerWishlist(wishlistToken = getWishlistToken()) {
+  return mirrorWishlistRequest(
+    `/wishlist?wishlistToken=${encodeURIComponent(wishlistToken)}`,
+    { method: "DELETE" }
+  );
 }
 
 /**

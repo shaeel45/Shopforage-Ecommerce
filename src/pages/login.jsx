@@ -9,13 +9,13 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const { login, demoLogin } = useAuth();
+  const { login } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/products";
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) {
       addToast("Please provide your email and password.", "error");
@@ -23,22 +23,16 @@ export default function Login() {
     }
 
     setLoading(true);
-    setTimeout(() => {
-      login(email, password);
-      setLoading(false);
-      addToast("Welcome back to ShopForge!", "success");
-      navigate(from, { replace: true });
-    }, 600);
-  };
+    const result = await login(email, password);
+    setLoading(false);
 
-  const handleDemoLogin = () => {
-    setLoading(true);
-    setTimeout(() => {
-      demoLogin();
-      setLoading(false);
-      addToast("Logged in as Demo Customer (Alex Morgan)!", "success");
-      navigate(from, { replace: true });
-    }, 500);
+    if (!result.success) {
+      addToast(result.message, "error", 4500);
+      return;
+    }
+
+    addToast("Welcome back to ShopForge!", "success");
+    navigate(from, { replace: true });
   };
 
   return (
@@ -57,23 +51,10 @@ export default function Login() {
           </p>
         </div>
 
-        {/* Demo Login Quick Access Button */}
-        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-center">
-          <p className="text-[11px] text-stone-500 mb-2">Want to test the platform right away?</p>
-          <button
-            type="button"
-            onClick={handleDemoLogin}
-            disabled={loading}
-            className="w-full bg-amber-400 hover:bg-amber-500 text-stone-950 font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-sm"
-          >
-            ⚡ 1-Click Demo Login (Alex Morgan)
-          </button>
-        </div>
-
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-stone-200"></div>
           <span className="flex-shrink mx-3 text-[11px] text-stone-400 uppercase font-semibold">
-            Or sign in with email
+            Sign in with email
           </span>
           <div className="flex-grow border-t border-stone-200"></div>
         </div>

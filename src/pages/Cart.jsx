@@ -6,7 +6,7 @@ import { useAuth } from "../context/AuthContext";
 export default function Cart() {
   const [couponInput, setCouponInput] = useState("");
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, openAuthModal } = useAuth();
 
   const {
     cart,
@@ -267,7 +267,7 @@ export default function Cart() {
               <button
                 onClick={() => {
                   if (!isAuthenticated) {
-                    navigate("/login", { state: { from: { pathname: "/checkout" } } });
+                    openAuthModal("signin");
                   } else {
                     navigate("/checkout");
                   }

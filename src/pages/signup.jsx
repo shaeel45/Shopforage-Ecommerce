@@ -27,20 +27,39 @@ export default function Signup() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.firstName || !formData.email || !formData.password) {
+    if (
+      !formData.firstName.trim() ||
+      !formData.lastName.trim() ||
+      !formData.email.trim() ||
+      !formData.password
+    ) {
       addToast("Please fill in all required fields.", "error");
       return;
     }
 
+    if (formData.password.length < 8) {
+      addToast("Password must be at least 8 characters.", "error");
+      return;
+    }
+
+    if (!formData.agreeTerms) {
+      addToast("Please accept the Terms of Service to continue.", "error");
+      return;
+    }
+
     setLoading(true);
-    setTimeout(() => {
-      signup(formData);
-      setLoading(false);
-      addToast("Welcome to ShopForge! Your account is created.", "success");
-      navigate(from, { replace: true });
-    }, 600);
+    const result = await signup(formData);
+    setLoading(false);
+
+    if (!result.success) {
+      addToast(result.message, "error", 4500);
+      return;
+    }
+
+    addToast("Welcome to ShopForge! Your account is created.", "success");
+    navigate(from, { replace: true });
   };
 
   return (

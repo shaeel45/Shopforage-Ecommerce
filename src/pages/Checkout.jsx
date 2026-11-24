@@ -6,17 +6,13 @@ import { useOrders } from "../context/OrderContext";
 import { useToast } from "../context/ToastContext";
 import {
   checkoutOrder,
-  consumeInventory,
-  createOrder,
-  redeemPromoCode,
-  releaseInventory,
-  reserveInventory,
+  getCartToken,
 } from "../api";
 
 export default function Checkout() {
   const navigate = useNavigate();
   const { cart, subtotal, discountAmount, shippingFee, tax, clearCart, appliedPromo } = useCart();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, openAuthModal } = useAuth();
   const { placeOrder, recordOrder } = useOrders();
   const { addToast } = useToast();
 
@@ -68,18 +64,6 @@ export default function Checkout() {
       return;
     }
 
-    // Aggregate cart lines per product. Non-numeric IDs mean the catalog is
-    // running on local mock data, so there is no backend stock to reserve.
-    const requested = new Map();
-    for (const item of cart) {
-      const productId = Number(item.id);
-      if (!Number.isInteger(productId) || productId <= 0) continue;
-      requested.set(
-        productId,
-        (requested.get(productId) || 0) + Number(item.quantity || 0)
-      );
-    }
-
     const shippingLabel =
       shippingMethod === "express" ? "Priority Express ($14.99)" : "Standard Shipping";
     const paymentLabel =
@@ -89,203 +73,90 @@ export default function Checkout() {
         ? "PayPal"
         : "Cash on Delivery";
 
-    const referenceId = `SF-${Date.now()}`;
-    const reserved = [];
+    const shippingAddress = {
+      fullName: formData.fullName,
+      email: formData.email,
+      phone: formData.phone,
+      street: formData.street,
+      city: formData.city,
+      state: formData.state,
+      postalCode: formData.postalCode,
+      country: formData.country,
+    };
+
     setIsSubmitting(true);
 
     try {
-      // 1) First attempt unified atomic checkout via Orders microservice
-      try {
-        const cartToken =
-          localStorage.getItem("shopforge_cart_token") ||
-          `SF-CART-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-        localStorage.setItem("shopforge_cart_token", cartToken);
+      // The orders service owns the whole flow: promo validation, stock
+      // reserve + consume, order + audit trail, redemption and cart clearing.
+      // The item snapshot is a fallback for a cart that failed to sync.
+      const result = await checkoutOrder({
+        cartToken: getCartToken(),
+        customerId: user?.id,
+        customerName: formData.fullName,
+        customerEmail: formData.email,
+        customerPhone: formData.phone,
+        shippingAddress,
+        shippingMethod: shippingLabel,
+        paymentMethod: paymentLabel,
+        promoCode: appliedPromo?.code,
+        tax,
+        shippingFee: selectedShippingCost,
+        items: cart.map((item) => ({
+          productId:
+            item.id === undefined || item.id === null ? undefined : String(item.id),
+          name: item.name,
+          price: Number(item.price) || 0,
+          quantity: Number(item.quantity) || 1,
+          size: item.selectedSize,
+          color: item.selectedColor,
+          image: item.image,
+        })),
+      });
 
-        const checkoutRes = await checkoutOrder({
-          cartToken,
-          customerId: user?.id,
-          customerName: formData.fullName,
-          customerEmail: formData.email,
-          customerPhone: formData.phone,
-          shippingAddress: {
-            fullName: formData.fullName,
-            email: formData.email,
-            phone: formData.phone,
-            street: formData.street,
-            city: formData.city,
-            state: formData.state,
-            postalCode: formData.postalCode,
-            country: formData.country,
-          },
-          shippingMethod: shippingLabel,
-          paymentMethod: paymentLabel,
-          promoCode: appliedPromo?.code,
-          tax,
-          shippingFee: selectedShippingCost,
-          items: cart.map((item) => ({
-            productId:
-              item.id === undefined || item.id === null ? undefined : String(item.id),
-            name: item.name,
-            price: Number(item.price) || 0,
-            quantity: Number(item.quantity) || 1,
-            size: item.selectedSize,
-            color: item.selectedColor,
-            image: item.image,
-          })),
-        });
-
-        if (checkoutRes && checkoutRes.order) {
-          const createdOrder =
-            recordOrder(checkoutRes.order) || checkoutRes.order;
-          clearCart();
-          addToast("Order placed successfully!", "success");
-          navigate(`/order-success/${createdOrder.id}`);
-          return;
-        }
-      } catch (backendCheckoutError) {
-        // If it's a conflict or inventory shortage error from backend, show error
-        if (
-          backendCheckoutError.message &&
-          (backendCheckoutError.message.toLowerCase().includes("stock") ||
-            backendCheckoutError.message.toLowerCase().includes("promo"))
-        ) {
-          addToast(backendCheckoutError.message, "error");
-          return;
-        }
-        console.warn(
-          "Backend /checkout unreachable or unavailable, falling back to client flow:",
-          backendCheckoutError.message
-        );
+      if (!result?.order) {
+        throw new Error("Checkout did not return an order");
       }
 
-      // 2) Fallback: Reserve stock. If any line fails, release what we already hold.
-      for (const [productId, quantity] of requested) {
-        try {
-          await reserveInventory(productId, quantity, referenceId);
-          reserved.push({ productId, quantity });
-        } catch (error) {
-          await releaseReservations(reserved, referenceId);
-          addToast(
-            error.message || "Some items are no longer available in the requested quantity.",
-            "error"
-          );
-          return;
-        }
+      const createdOrder = recordOrder(result.order) || result.order;
+      clearCart();
+
+      if (result.warnings?.length) {
+        addToast(result.warnings[0], "warning");
+      }
+      addToast("Order placed successfully!", "success");
+      navigate(`/order-success/${createdOrder.id}`);
+    } catch (error) {
+      // A real HTTP status means the sale was rejected (stock, promo, or
+      // validation) — keep the customer on this page with the reason.
+      if (error?.status) {
+        addToast(error.message, "error");
+        return;
       }
 
-      // 2) Simulate payment processing.
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-
-      // 3) Finalize the sale (decrements stock + writes SALE history).
-      for (const hold of reserved) {
-        try {
-          await consumeInventory(hold.productId, hold.quantity, referenceId);
-        } catch (error) {
-          await releaseReservations(reserved, referenceId);
-          addToast(
-            error.message || "Payment could not be completed. Your stock hold was released.",
-            "error"
-          );
-          return;
-        }
-      }
-
-      // Shape used by the local cache when the orders service is unreachable.
-      const localOrderData = {
+      // Orders service unreachable: never lose the sale, keep it locally.
+      const createdOrder = placeOrder({
         items: [...cart],
-        shippingAddress: {
-          fullName: formData.fullName,
-          email: formData.email,
-          phone: formData.phone,
-          street: formData.street,
-          city: formData.city,
-          state: formData.state,
-          postalCode: formData.postalCode,
-          country: formData.country
-        },
+        shippingAddress,
         shippingMethod: shippingLabel,
         paymentMethod: paymentLabel,
         subtotal,
         discount: discountAmount,
         shippingFee: selectedShippingCost,
         tax,
-        total: finalTotal
-      };
-
-      let createdOrder;
-      try {
-        const apiOrder = await createOrder({
-          customerId: user?.id,
-          customerName: formData.fullName,
-          customerEmail: formData.email,
-          customerPhone: formData.phone,
-          shippingAddress: {
-            fullName: formData.fullName,
-            email: formData.email,
-            phone: formData.phone,
-            street: formData.street,
-            city: formData.city,
-            state: formData.state,
-            postalCode: formData.postalCode,
-            country: formData.country
-          },
-          shippingMethod: shippingLabel,
-          paymentMethod: paymentLabel,
-          promoCode: appliedPromo?.code,
-          items: cart.map((item) => ({
-            productId:
-              item.id === undefined || item.id === null ? undefined : String(item.id),
-            name: item.name,
-            price: Number(item.price) || 0,
-            quantity: Number(item.quantity) || 1,
-            size: item.selectedSize,
-            color: item.selectedColor,
-            image: item.image
-          })),
-          subtotal,
-          discount: discountAmount,
-          shippingFee: selectedShippingCost,
-          tax,
-          total: finalTotal
-        });
-
-        createdOrder = recordOrder(apiOrder) || placeOrder(localOrderData);
-      } catch (error) {
-        // Never lose a paid order because the order service is down.
-        createdOrder = placeOrder(localOrderData);
-        addToast(
-          `Order placed, but it could not be saved to the order service: ${error.message}`,
-          "warning"
-        );
-      }
-
-      // 4) Record the promo redemption (best-effort: the order already exists).
-      if (appliedPromo?.code) {
-        try {
-          await redeemPromoCode(appliedPromo.code, subtotal, createdOrder.id);
-        } catch (error) {
-          addToast(
-            `Order placed, but the promo code could not be recorded: ${error.message}`,
-            "warning"
-          );
-        }
-      }
+        total: finalTotal,
+      });
 
       clearCart();
-      addToast("Order placed successfully!", "success");
+      addToast(
+        `Order placed, but it could not be saved to the order service: ${error.message}`,
+        "warning"
+      );
       navigate(`/order-success/${createdOrder.id}`);
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  async function releaseReservations(holds, referenceId) {
-    await Promise.all(
-      holds.map((hold) =>
-        releaseInventory(hold.productId, hold.quantity, referenceId).catch(() => null)
-      )
-    );
-  }
 
   if (cart.length === 0) {
     return (
@@ -319,7 +190,7 @@ export default function Checkout() {
           </p>
           <div className="space-y-3">
             <button
-              onClick={() => navigate("/login", { state: { from: { pathname: "/checkout" } } })}
+              onClick={() => openAuthModal("signin")}
               className="block w-full bg-black text-white font-bold py-3.5 px-6 rounded-xl text-xs hover:bg-stone-800 transition shadow-md"
             >
               Sign In to Continue

@@ -12,6 +12,7 @@ import { OrderProvider } from "./context/OrderContext";
 import Navbar from "./components/navbar";
 import Footer from "./components/footer";
 import ScrollToTop from "./components/ScrollToTop";
+import AuthModal from "./components/AuthModal";
 
 // Pages
 import Homepage from "./pages/homepage";
@@ -71,6 +72,7 @@ function App() {
                 </main>
                 <Footer />
               </div>
+              <AuthModal />
             </OrderProvider>
           </CartProvider>
         </WishlistProvider>
