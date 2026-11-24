@@ -11,7 +11,7 @@ import {
 
 export default function Checkout() {
   const navigate = useNavigate();
-  const { cart, subtotal, discountAmount, shippingFee, tax, clearCart, appliedPromo } = useCart();
+  const { cart, subtotal, discountAmount, shippingFee, tax, clearCart, appliedPromo, storeSettings } = useCart();
   const { user, isAuthenticated, openAuthModal } = useAuth();
   const { placeOrder, recordOrder } = useOrders();
   const { addToast } = useToast();
@@ -54,7 +54,9 @@ export default function Checkout() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const selectedShippingCost = shippingMethod === "express" ? 14.99 : shippingFee;
+  const expressShippingRate = storeSettings.expressShippingRate;
+  const selectedShippingCost =
+    shippingMethod === "express" ? expressShippingRate : shippingFee;
   const finalTotal = subtotal - discountAmount + selectedShippingCost + tax;
 
   const handleSubmitOrder = async (e) => {

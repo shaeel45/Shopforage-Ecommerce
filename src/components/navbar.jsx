@@ -11,10 +11,21 @@ export default function Navbar() {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const { itemCount } = useCart();
+  const { itemCount, storeSettings } = useCart();
   const { wishlistCount } = useWishlist();
   const { user, isAuthenticated, logout } = useAuth();
   const dropdownRef = useRef(null);
+
+  const currencySymbol =
+    { USD: "$", CAD: "$", AUD: "$", EUR: "€", GBP: "£" }[
+      storeSettings.currency
+    ] || "$";
+  const shippingHint = storeSettings.freeShippingEnabled
+    ? `Free Shipping on orders over ${currencySymbol}${Number(
+        storeSettings.freeShippingThreshold
+      ).toFixed(0)}`
+    : "";
+  const bannerMessage = (storeSettings.bannerText || "").trim() || shippingHint;
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -38,11 +49,11 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-stone-200 bg-white/95 backdrop-blur-md transition-all">
       {/* Top Banner */}
-      <div className="bg-stone-900 text-stone-200 text-xs py-1.5 px-4 text-center tracking-wide font-medium flex items-center justify-center gap-2">
-        <span>✨ Spring Season: Use code <strong className="text-white font-bold underline">SHOPFORGE10</strong> for 10% off</span>
-        <span className="hidden sm:inline">|</span>
-        <span className="hidden sm:inline">Free Shipping on orders over $75</span>
-      </div>
+      {storeSettings.bannerActive && bannerMessage && (
+        <div className="bg-stone-900 text-stone-200 text-xs py-1.5 px-4 text-center tracking-wide font-medium flex items-center justify-center gap-2">
+          <span>{bannerMessage}</span>
+        </div>
+      )}
 
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8" ref={dropdownRef}>
         {/* Logo */}

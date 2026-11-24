@@ -1,13 +1,22 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrderContext";
 import { useWishlist } from "../context/WishlistContext";
 import { useCart } from "../context/CartContext";
 import { useToast } from "../context/ToastContext";
+import { fetchUserAddress, updateUserAddress } from "../api";
+
+const EMPTY_ADDRESS = {
+  street: "",
+  city: "",
+  state: "",
+  postalCode: "",
+  country: "United States",
+};
 
 export default function Profile() {
-  const { user, isAuthenticated, updateProfile, logout } = useAuth();
+  const { user, isAuthenticated, accessToken, updateProfile, logout } = useAuth();
   const { orders } = useOrders();
   const { wishlistCount } = useWishlist();
   const { itemCount } = useCart();
@@ -15,6 +24,8 @@ export default function Profile() {
   const navigate = useNavigate();
 
   const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [isLoadingAddress, setIsLoadingAddress] = useState(false);
+  const [isSavingAddress, setIsSavingAddress] = useState(false);
   const [addressForm, setAddressForm] = useState({
     street: user?.address?.street || "",
     city: user?.address?.city || "",
@@ -22,6 +33,33 @@ export default function Profile() {
     postalCode: user?.address?.postalCode || "",
     country: user?.address?.country || "United States"
   });
+
+  // The users service owns the saved address, so refresh it when the profile
+  // opens (the cached copy only covers offline / mock sessions).
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) return undefined;
+
+    let cancelled = false;
+    setIsLoadingAddress(true);
+
+    (async () => {
+      try {
+        const saved = await fetchUserAddress(accessToken);
+        if (cancelled || !saved) return;
+        const address = { ...EMPTY_ADDRESS, ...saved };
+        setAddressForm(address);
+        updateProfile({ address });
+      } catch (error) {
+        console.warn("Unable to load saved address:", error.message);
+      } finally {
+        if (!cancelled) setIsLoadingAddress(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, accessToken, updateProfile]);
 
   if (!isAuthenticated) {
     return (
@@ -42,11 +80,37 @@ export default function Profile() {
     );
   }
 
-  const handleSaveAddress = (e) => {
+  const handleSaveAddress = async (e) => {
     e.preventDefault();
-    updateProfile({ address: addressForm });
-    setIsEditingAddress(false);
-    addToast("Address details saved successfully!", "success");
+
+    const address = {
+      street: addressForm.street.trim(),
+      city: addressForm.city.trim(),
+      state: addressForm.state.trim(),
+      postalCode: addressForm.postalCode.trim(),
+      country: addressForm.country.trim() || "United States",
+    };
+
+    setIsSavingAddress(true);
+    try {
+      const saved = accessToken
+        ? await updateUserAddress(address, accessToken)
+        : address;
+      const nextAddress = { ...address, ...(saved || {}) };
+
+      setAddressForm(nextAddress);
+      updateProfile({ address: nextAddress });
+      setIsEditingAddress(false);
+      addToast("Address details saved successfully!", "success");
+    } catch (error) {
+      // Keep the profile usable when the API is down: cache locally so the
+      // form still reflects what the customer just entered.
+      updateProfile({ address });
+      setIsEditingAddress(false);
+      addToast(`Saved locally — ${error.message}`, "info");
+    } finally {
+      setIsSavingAddress(false);
+    }
   };
 
   const handleSignOut = () => {
@@ -205,9 +269,10 @@ export default function Profile() {
                 <div className="flex gap-2 pt-2">
                   <button
                     type="submit"
-                    className="bg-black text-white text-xs font-bold px-4 py-2 rounded-xl hover:bg-stone-800 transition"
+                    disabled={isSavingAddress}
+                    className="bg-black text-white text-xs font-bold px-4 py-2 rounded-xl hover:bg-stone-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Save Changes
+                    {isSavingAddress ? "Saving…" : "Save Changes"}
                   </button>
                   <button
                     type="button"
@@ -218,6 +283,8 @@ export default function Profile() {
                   </button>
                 </div>
               </form>
+            ) : isLoadingAddress ? (
+              <p className="text-xs text-stone-400">Loading saved address…</p>
             ) : (
               <div className="text-xs text-stone-600 leading-relaxed">
                 {user.address?.street ? (

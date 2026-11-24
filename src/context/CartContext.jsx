@@ -12,7 +12,9 @@ import {
   addCartItem,
   applyCartPromo,
   clearServerCart,
+  DEFAULT_STORE_SETTINGS,
   fetchCart,
+  fetchStoreSettings,
   getCartToken,
   removeCartItem,
   removeCartPromo,
@@ -75,6 +77,20 @@ export const CartProvider = ({ children }) => {
       return null;
     }
   });
+
+  /** Promotions banner + shipping rules, refreshed from the settings API. */
+  const [storeSettings, setStoreSettings] = useState(DEFAULT_STORE_SETTINGS);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const settings = await fetchStoreSettings();
+      if (!cancelled) setStoreSettings(settings);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const { addToast } = useToast();
   const { user } = useAuth();
@@ -377,8 +393,13 @@ export const CartProvider = ({ children }) => {
   // Calculations
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const freeShippingThreshold = 75.0;
-  const shippingFee = subtotal >= freeShippingThreshold || subtotal === 0 ? 0.0 : 9.99;
+  const freeShippingThreshold = storeSettings.freeShippingThreshold;
+  const qualifiesForFreeShipping =
+    storeSettings.freeShippingEnabled && subtotal >= freeShippingThreshold;
+  const shippingFee =
+    subtotal === 0 || qualifiesForFreeShipping
+      ? 0.0
+      : storeSettings.standardShippingRate;
   const discountAmount = appliedPromo ? (subtotal * appliedPromo.discountPercent) / 100 : 0;
   const tax = ((subtotal - discountAmount) * 0.08); // 8% estimated tax
   const total = Math.max(0, subtotal - discountAmount + shippingFee + (subtotal > 0 ? tax : 0));
@@ -390,7 +411,9 @@ export const CartProvider = ({ children }) => {
         itemCount,
         subtotal,
         freeShippingThreshold,
+        qualifiesForFreeShipping,
         shippingFee,
+        storeSettings,
         discountAmount,
         tax,
         total,

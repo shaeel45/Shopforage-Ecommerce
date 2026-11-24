@@ -553,6 +553,152 @@ export function fetchCurrentUser(accessToken) {
   return requestJson("/users/me", { token: accessToken });
 }
 
+// --- Shipping address -------------------------------------------------------
+// The users service stores the customer's default address. The profile page
+// reads it on mount and replaces it on save.
+
+/**
+ * Saved default shipping address for the signed-in customer.
+ * Throws when the request fails so the caller can fall back to the address
+ * already cached in the auth context.
+ */
+export function fetchUserAddress(accessToken) {
+  return requestJson("/users/me/address", { token: accessToken });
+}
+
+/** Persist the profile page address form (`PUT` replaces the whole address). */
+export function updateUserAddress(address, accessToken) {
+  return requestJson("/users/me/address", {
+    method: "PUT",
+    body: {
+      street: address?.street || "",
+      city: address?.city || "",
+      state: address?.state || "",
+      postalCode: address?.postalCode || "",
+      country: address?.country || "United States",
+    },
+    token: accessToken,
+  });
+}
+
+// --- Store settings ---------------------------------------------------------
+// Promotions banner, shipping rules and branding, served by the promotions
+// service through the gateway. The bundle below mirrors the server defaults so
+// the storefront still renders correctly when the API is unreachable.
+
+export const DEFAULT_STORE_SETTINGS = {
+  storeName: "ShopForge",
+  tagline: "Modern Wardrobe Essentials",
+  supportEmail: "support@shopforge.com",
+  bannerText:
+    "Spring Season: Use code SHOPFORGE10 for 10% off | Free Shipping on orders over $75",
+  bannerActive: true,
+  freeShippingEnabled: true,
+  freeShippingThreshold: 75,
+  standardShippingRate: 9.99,
+  expressShippingRate: 14.99,
+  handlingDays: 1,
+  currency: "USD",
+};
+
+/** Coerce the API payload into the numbers/booleans the storefront expects. */
+export function normalizeStoreSettings(raw) {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_STORE_SETTINGS };
+
+  const number = (value, fallback) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  };
+
+  return {
+    ...DEFAULT_STORE_SETTINGS,
+    storeName: raw.storeName || DEFAULT_STORE_SETTINGS.storeName,
+    tagline: raw.tagline || DEFAULT_STORE_SETTINGS.tagline,
+    supportEmail: raw.supportEmail || DEFAULT_STORE_SETTINGS.supportEmail,
+    bannerText:
+      typeof raw.bannerText === "string"
+        ? raw.bannerText
+        : DEFAULT_STORE_SETTINGS.bannerText,
+    bannerActive:
+      raw.bannerActive === undefined
+        ? DEFAULT_STORE_SETTINGS.bannerActive
+        : Boolean(raw.bannerActive),
+    freeShippingEnabled:
+      raw.freeShippingEnabled === undefined
+        ? DEFAULT_STORE_SETTINGS.freeShippingEnabled
+        : Boolean(raw.freeShippingEnabled),
+    freeShippingThreshold: number(
+      raw.freeShippingThreshold,
+      DEFAULT_STORE_SETTINGS.freeShippingThreshold
+    ),
+    standardShippingRate: number(
+      raw.standardShippingRate,
+      DEFAULT_STORE_SETTINGS.standardShippingRate
+    ),
+    expressShippingRate: number(
+      raw.expressShippingRate,
+      DEFAULT_STORE_SETTINGS.expressShippingRate
+    ),
+    handlingDays: number(
+      raw.handlingDays,
+      DEFAULT_STORE_SETTINGS.handlingDays
+    ),
+    currency: raw.currency || DEFAULT_STORE_SETTINGS.currency,
+  };
+}
+
+/** Promotions banner + shipping rules. Falls back to the bundled defaults. */
+export async function fetchStoreSettings() {
+  try {
+    const response = await fetch(`${API_URL}/settings/store`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    return normalizeStoreSettings(await response.json());
+  } catch (error) {
+    console.warn("Store settings API unreachable, using defaults:", error.message);
+    return { ...DEFAULT_STORE_SETTINGS };
+  }
+}
+
+/**
+ * Shipping options with their live rates (checkout radio list).
+ * Returns null when the API is unreachable so callers can fall back.
+ */
+export async function fetchShippingMethods() {
+  try {
+    const response = await fetch(`${API_URL}/settings/shipping/methods`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.warn("Shipping methods API unreachable:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Price a shipment for the current cart subtotal.
+ * `POST`-free: `GET /settings/shipping/quote?subtotal=89.5&method=express`.
+ */
+export async function fetchShippingQuote(subtotal, method = "standard") {
+  try {
+    const params = new URLSearchParams({
+      subtotal: String(Math.max(0, Number(subtotal) || 0)),
+      method: method === "express" ? "express" : "standard",
+    });
+    const response = await fetch(`${API_URL}/settings/shipping/quote?${params}`);
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.warn("Shipping quote API unreachable:", error.message);
+    return null;
+  }
+}
+
 /** Hold stock for a pending checkout (prevents overselling). */
 export function reserveInventory(productId, quantity, referenceId) {
   return postPublicJson("/inventory/checkout/reserve", {
