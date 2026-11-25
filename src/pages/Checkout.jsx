@@ -393,7 +393,9 @@ export default function Checkout() {
                       <p className="text-[11px] text-stone-500">1 - 2 business days</p>
                     </div>
                   </div>
-                  <span className="text-xs font-bold text-stone-900">$14.99</span>
+                  <span className="text-xs font-bold text-stone-900">
+                    ${expressShippingRate.toFixed(2)}
+                  </span>
                 </label>
               </div>
             </div>
