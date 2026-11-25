@@ -4,11 +4,13 @@ import HeroCarousel from "../components/HeroCarousel";
 import ProductCard from "../components/ProductCard";
 import { products as fallbackProducts, categories, reviews } from "../data/products";
 import { useToast } from "../context/ToastContext";
-import { fetchProducts } from "../api";
+import { fetchActivePromoCodes, fetchProducts } from "../api";
 
 export default function Homepage() {
   const { addToast } = useToast();
   const [productList, setProductList] = useState(fallbackProducts);
+  const [activePromoCodes, setActivePromoCodes] = useState([]);
+
 
   useEffect(() => {
     fetchProducts({ all: true })
@@ -22,10 +24,29 @@ export default function Homepage() {
       });
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    fetchActivePromoCodes()
+      .then((codes) => {
+        if (active && Array.isArray(codes)) {
+          setActivePromoCodes(codes);
+        }
+      })
+      .catch((error) => {
+        console.warn("Homepage promo codes fetch failed:", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const trendingProducts = productList.filter((p) => p.isTrending || p.featured).slice(0, 8);
   const newArrivals = productList.filter((p) => p.isNew).slice(0, 4);
 
   const copyCoupon = (code) => {
+    if (!code) return;
     navigator.clipboard?.writeText(code);
     addToast(`Coupon code "${code}" copied to clipboard!`, "success");
   };
@@ -126,11 +147,11 @@ export default function Homepage() {
             </p>
             <div className="pt-2 flex flex-wrap gap-3 justify-center lg:justify-start items-center">
               <button
-                onClick={() => copyCoupon("SHOPFORGE10")}
+                onClick={() => copyCoupon(activePromoCodes[0]?.code || "SHOPFORGE10")}
                 className="bg-white/10 hover:bg-white/20 border border-white/30 text-white font-mono font-bold text-sm px-4 py-2.5 rounded-xl transition flex items-center gap-2 cursor-pointer"
                 title="Click to copy"
               >
-                <span>SHOPFORGE10</span>
+                <span>{activePromoCodes[0]?.code || "SHOPFORGE10"}</span>
                 <span className="text-xs text-amber-300">📋 Copy</span>
               </button>
               <Link

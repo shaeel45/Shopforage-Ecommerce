@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { fetchActivePromoCodes } from "../api";
 
 const slides = [
   {
@@ -28,7 +29,7 @@ const slides = [
     id: 3,
     badge: "Special Seasonal Deals",
     title: "Up to 20% Off Select Styles",
-    subtitle: "Use coupon code SHOPFORGE10 at checkout for an extra 10% off your entire order.",
+    subtitle: "Explore current promotions and use an active coupon code at checkout.",
     ctaText: "Claim Your Deals",
     ctaLink: "/offers",
     secondaryText: "Shop Shirts",
@@ -39,6 +40,22 @@ const slides = [
 
 export default function HeroCarousel() {
   const [current, setCurrent] = useState(0);
+  const [activePromoCodes, setActivePromoCodes] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+
+    fetchActivePromoCodes().then((codes) => {
+      if (!active || !Array.isArray(codes)) return;
+
+      console.info("Active promo codes for hero carousel:", codes);
+      setActivePromoCodes(codes);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -78,8 +95,27 @@ export default function HeroCarousel() {
                   {slide.title}
                 </h1>
                 <p className="text-stone-300 text-sm sm:text-base leading-relaxed max-w-lg">
-                  {slide.subtitle}
+                  {slide.id === 3 && activePromoCodes.length > 0
+                    ? "Use one of these active promo codes at checkout:"
+                    : slide.subtitle}
                 </p>
+                {slide.id === 3 && activePromoCodes.length > 0 && (
+                  <div className="flex flex-wrap gap-2" aria-label="Active promo codes">
+                    {activePromoCodes.map((promo) => (
+                      <span
+                        key={promo.code}
+                        className="rounded-lg border border-white/30 bg-white/15 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md"
+                      >
+                        <span className="font-mono">{promo.code}</span>
+                        {Number.isFinite(Number(promo.discountPercent)) && (
+                          <span className="ml-2 text-stone-300">
+                            {promo.discountPercent}% OFF
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-4 pt-2">
                   <Link
                     to={slide.ctaLink}
