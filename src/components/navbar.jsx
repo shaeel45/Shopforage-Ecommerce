@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useWishlist } from "../context/WishlistContext";
@@ -59,10 +59,15 @@ export default function Navbar() {
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 group">
           <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center font-black text-lg group-hover:bg-stone-800 transition">
-            S
+            {storeSettings.storeName?.charAt(0).toUpperCase() || "S"}
           </div>
           <span className="text-xl font-bold tracking-tight text-stone-900">
-            Shop<span className="text-stone-500">Forge</span>
+            {storeSettings.storeName || "ShopForge"}
+            {storeSettings.tagline && (
+              <span className="block text-[10px] font-medium leading-tight tracking-normal text-stone-500">
+                {storeSettings.tagline}
+              </span>
+            )}
           </span>
         </Link>
 

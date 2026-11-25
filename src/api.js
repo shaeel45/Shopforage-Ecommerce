@@ -590,8 +590,7 @@ export const DEFAULT_STORE_SETTINGS = {
   storeName: "ShopForge",
   tagline: "Modern Wardrobe Essentials",
   supportEmail: "support@shopforge.com",
-  bannerText:
-    "Spring Season: Use code SHOPFORGE10 for 10% off | Free Shipping on orders over $75",
+  bannerText: "",
   bannerActive: true,
   freeShippingEnabled: true,
   freeShippingThreshold: 75,
