@@ -1,0 +1,19 @@
+# Cloudflare Worker with static assets for the ShopForge admin portal.
+#
+# The deploy command `npx wrangler deploy` builds this into a Worker that:
+#   1. serves the Vite build from ./dist as static assets
+#   2. runs worker/index.js for /api/* and proxies it to the live API
+#
+# Keep `name` identical to the project name in the Cloudflare dashboard,
+# otherwise wrangler creates a second Worker instead of updating this one.
+name = "shopforage-ecommerce"
+main = "worker/index.js"
+compatibility_date = "2026-11-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# BrowserRouter deep links (/dashboard, /orders/12) fall back to index.html.
+not_found_handling = "single-page-application"
+# Only API calls hit the Worker; everything else is served from the CDN.
+run_worker_first = ["/api", "/api/*"]
